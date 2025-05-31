@@ -135,7 +135,7 @@ class TingwuSDK:
             domain='tingwu.cn-beijing.aliyuncs.com',
             version='2023-09-30',
             protocol_type='https',
-            method='POST',
+            method='PUT',
             uri='/openapi/tingwu/v2/tasks'
         )
         
@@ -156,6 +156,7 @@ class TingwuSDK:
                 
         except Exception as e:
             logger.error(f"Error creating task: {str(e)}")
+            logger.debug(f"Request details: domain='tingwu.cn-beijing.aliyuncs.com', version='2023-09-30', uri='/openapi/tingwu/v2/tasks'")
             raise
     
     def end_task(self) -> Dict:
@@ -180,7 +181,7 @@ class TingwuSDK:
             domain='tingwu.cn-beijing.aliyuncs.com',
             version='2023-09-30',
             protocol_type='https',
-            method='POST',
+            method='PUT',
             uri='/openapi/tingwu/v2/tasks/end'
         )
         
@@ -217,7 +218,7 @@ class TingwuSDK:
             domain='tingwu.cn-beijing.aliyuncs.com',
             version='2023-09-30',
             protocol_type='https',
-            method='POST',
+            method='PUT',
             uri='/openapi/tingwu/v2/tasks/info'
         )
         
