@@ -20,15 +20,18 @@ def on_transcription_result(result):
     Args:
         result: The transcription result from Tingwu API
     """
+    # Log full result for debugging
+    logger.debug(f"Full result: {result}")
+    
     # Process different result types
     if 'TranscriptionResult' in result:
         sentence = result['TranscriptionResult'].get('SentenceText', '')
         is_sentence_end = result['TranscriptionResult'].get('SentenceEnd', False)
         
         if is_sentence_end:
-            print(f"Final: {sentence}")
+            print(f"\nFinal: {sentence}")
         else:
-            print(f"Interim: {sentence}", end="\r")
+            print(f"Interim: {sentence}", end="\r", flush=True)
     
     # Handle translation results if present
     if 'TranslationResult' in result:
@@ -37,7 +40,11 @@ def on_transcription_result(result):
             is_sentence_end = translation.get('SentenceEnd', False)
             
             if is_sentence_end:
-                print(f"Translation ({lang}): {sentence}")
+                print(f"\nTranslation ({lang}): {sentence}")
+    
+    # Handle status messages
+    if 'Status' in result:
+        logger.info(f"Status message received: {result['Status']}")
 
 def main():
     """Main function to demonstrate real-time speech-to-text using Tingwu SDK"""
@@ -92,9 +99,9 @@ def main():
         # Set up callback for transcription results
         sdk.set_callbacks(
             on_transcription_result=on_transcription_result,
-            on_connection_open=lambda: print("WebSocket connection opened"),
-            on_connection_close=lambda: print("WebSocket connection closed"),
-            on_error=lambda error: print(f"Error: {error}")
+            on_connection_open=lambda: print("\nWebSocket connection opened and ready to stream audio"),
+            on_connection_close=lambda: print("\nWebSocket connection closed - will try to reconnect if still recording"),
+            on_error=lambda error: print(f"\nWebSocket error: {error}")
         )
         
         # Start WebSocket connection
@@ -106,13 +113,31 @@ def main():
         # Set up callback for audio data
         audio.set_audio_callback(sdk.send_audio_data)
         
-        # Start recording
+        # Start recording with connection check
         print("\nStarting microphone recording...")
         print(f"Recording for {args.duration} seconds. Speak now...")
         audio.start()
         
-        # Record for specified duration
-        time.sleep(args.duration)
+        # Monitor connection status during recording
+        start_time = time.time()
+        connection_check_interval = 2  # Check connection every 2 seconds
+        next_check_time = start_time + connection_check_interval
+        
+        while time.time() - start_time < args.duration:
+            if time.time() >= next_check_time:
+                if not sdk.is_connected:
+                    print("\nWebSocket connection lost, attempting to reconnect...")
+                    try:
+                        # Try to restart streaming
+                        sdk.stop_streaming()
+                        time.sleep(1)
+                        sdk.start_streaming()
+                        print("Reconnected successfully")
+                    except Exception as e:
+                        print(f"\nFailed to reconnect: {e}")
+                        break
+                next_check_time = time.time() + connection_check_interval
+            time.sleep(0.1)  # Small sleep to prevent CPU overuse
         
         # Stop recording
         print("\nStopping recording...")
