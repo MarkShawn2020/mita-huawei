@@ -81,10 +81,30 @@ def convert_float_to_pcm16_bytes(float_samples_dat):
 
 def EnsureRecognitionSessionActive():
     """
-    创建阿里云HTTP实时记录任务并尝试连接WebSocket。
-    由 VAD OffToOn (当 speechModule.par.Recognize=True 且无当前任务时) 调用。
-    返回 True 如果HTTP任务创建成功并且已尝试启动WebSocket连接，否则 False。
+    Ensures an Aliyun HTTP real-time recognition task is active and WebSocket is connecting.
+    If an existing TaskId is found, it attempts to reuse it. Otherwise, creates a new task.
+    Returns True if a session is active or successfully initiated, False otherwise.
     """
+    existing_task_id = ownerComp.par.Taskid.eval()
+    ws_client = ownerComp.op('stt_websocket_client')
+
+    if existing_task_id:
+        print(f"EnsureRecognitionSessionActive: Found existing TaskId: {existing_task_id}. Attempting to reuse.")
+        ownerComp.op('stt_status_text').text = f"Status: Reusing Task {existing_task_id}. Connecting WS..."
+        
+        if not ws_client.par.netaddress.eval():
+            print(f"ERROR: Attempting to reuse TaskId {existing_task_id}, but WebSocket netaddress is empty. Clearing TaskId to force recreation.")
+            ownerComp.par.Taskid = "" # Clear bad TaskId
+            ownerComp.op('stt_status_text').text = "Status: Error - WS address missing for reuse. Cleared TaskId."
+            # Fall through to create a new task by not returning True here
+        else:
+            if not ws_client.par.active.eval(): # Only activate if not already active
+                ws_client.par.active = True 
+            return True # Successfully initiated reuse (or confirmed active session)
+
+    # If we reach here, it means no existing_task_id, or reuse failed and TaskId was cleared.
+    # The original code for creating a new task will now execute, starting with:
+    # ownerComp.op('stt_status_text').text = "Status: Creating Task..."
     ownerComp.op('stt_status_text').text = "Status: Creating Task..."
     try:
         client, app_key, region_id = get_credentials_and_client()
@@ -139,7 +159,7 @@ def EnsureRecognitionSessionActive():
 
             if task_id and meeting_join_url:
                 ownerComp.par.Taskid = task_id
-                ownerComp.par.Websocketurl = meeting_join_url
+                # ownerComp.par.Websocketurl = meeting_join_url # Removed, ws_client.par.netaddress is set directly
                 ownerComp.op('stt_status_text').text = f"Status: Task {task_id} Created. Connecting WS..."
                 
                 ws_client = ownerComp.op('stt_websocket_client')
@@ -166,8 +186,17 @@ def EnsureRecognitionSessionActive():
 def TerminateRecognitionSession():
     """
     关闭WebSocket连接并结束阿里云HTTP实时记录任务。
-    由 speechModule.par.Recognize 变为 OFF 时，或发生严重错误时调用。
+    由 speechModule.par.Recognize 变为 OFF 时 (normal stop), 
+    或发生严重错误时 (error stop) 调用。
+    If called for a normal stop (Recognize is False), it will now skip termination to allow session reuse.
     """
+    if not ownerComp.par.Recognize.eval(): # Check if this is a "normal stop"
+        print("TerminateRecognitionSession: Recognize is OFF. Skipping termination for session reuse.")
+        # Not closing WebSocket, not stopping HTTP task, not clearing TaskId.
+        return # Skip full termination
+
+    # If Recognize is still ON, this is likely an error-driven call, proceed with full termination.
+    print("TerminateRecognitionSession: Recognize is ON. Proceeding with full termination due to likely error.")
     task_id_to_stop = ownerComp.par.Taskid.eval() # 获取当前准备停止的 TaskId
 
     # 1. 关闭 WebSocket
@@ -183,7 +212,7 @@ def TerminateRecognitionSession():
         ownerComp.op('stt_status_text').text = "Status: No active task to stop."
         # 确保参数被清理
         ownerComp.par.Taskid = ""
-        ownerComp.par.Websocketurl = ""
+        # ownerComp.par.Websocketurl = "" # Removed
         return
 
     ownerComp.op('stt_status_text').text = f"Status: Stopping Task {task_id_to_stop} via API..."
@@ -194,7 +223,7 @@ def TerminateRecognitionSession():
         print(f"Error getting credentials for TerminateRecognitionSession: {e}")
         # 即使获取凭证失败，也尝试清理本地参数
         ownerComp.par.Taskid = "" 
-        ownerComp.par.Websocketurl = ""
+        # ownerComp.par.Websocketurl = "" # Removed
         return
 
     # 构建StopTask请求的body (根据文档，似乎只需要 TaskId)
@@ -242,7 +271,7 @@ def TerminateRecognitionSession():
         # 避免并发操作或延迟回调导致清除了新的 TaskId
         if ownerComp.par.Taskid.eval() == task_id_to_stop:
             ownerComp.par.Taskid = "" 
-            ownerComp.par.Websocketurl = ""
+            # ownerComp.par.Websocketurl = "" # Removed
             print(f"Parameters for Task {task_id_to_stop} cleared after stop attempt.")
         else:
             print(f"Stop attempt for {task_id_to_stop}, but current TaskId is {ownerComp.par.Taskid.eval()}. Parameters not cleared by this call.")

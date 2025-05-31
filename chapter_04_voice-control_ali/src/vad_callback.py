@@ -30,32 +30,17 @@ def onOffToOn(channel, sampleIndex, val, prev):
         status_display_dat.text = "Status: VAD On - Reco Disabled."
         return
 
-    # 如果当前没有活动的阿里云任务 (TaskID 为空)，则尝试创建新任务并连接WebSocket
-    if not ownerComp.par.Taskid.eval():
-        print(f"{ownerComp.name} - VAD: No active task. Attempting to create new session.")
-        status_display_dat.text = "Status: VAD On - Creating Session..."
-        if api_module.EnsureRecognitionSessionActive(): # 这个函数会创建HTTP任务并尝试连接WS
-            # WebSocket 连接成功后，onConnect 回调 (在 websocket_callbacks.py 中)
-            # 会处理发送 StartTranscription 指令给阿里云服务器。
-            # 我们在这里不需要直接操作WebSocket或发送StartTranscription。
-            status_display_dat.text = "Status: VAD On - Session Creating..." # 等待WS连接
-        else:
-            # EnsureRecognitionSessionActive 返回 False 表示HTTP任务创建失败
-            status_display_dat.text = "Status: VAD On - Session Create Failed."
-            print(f"{ownerComp.name} - VAD: Failed to ensure recognition session is active.")
-            return # 创建任务失败，不继续
-            
-    elif ownerComp.par.Websocketurl.eval():
-        # 有 TaskID 和 WebSocket URL，但 WebSocket 未连接 (可能之前断开了)
-        print(f"{ownerComp.name} - VAD: Task exists but WebSocket disconnected. Attempting to reconnect.")
-        status_display_dat.text = "Status: VAD On - Reconnecting WS..."
-        # ws_client.par.Active = True # 尝试重新连接WebSocket
-        # onConnect 回调会处理后续的 StartTranscription
-        
+    # Always call EnsureRecognitionSessionActive. 
+    # It will handle reuse if TaskId exists, or create a new one if not.
+    if api_module.EnsureRecognitionSessionActive():
+        # If EnsureRecognitionSessionActive returns True, it means either a new session is creating 
+        # or an existing one is being reused and the WebSocket is being activated.
+        # The status text will be updated by EnsureRecognitionSessionActive or websocket_callbacks.
+        pass # Further status updates will come from aliyun_api_logic or websocket_callbacks
     else:
-        # TaskID 存在且 WebSocket 已连接 (或正在连接)
-        print(f"{ownerComp.name} - VAD: Session active. Ready for audio.")
-        status_display_dat.text = "Status: VAD On - Listening..."
+        # EnsureRecognitionSessionActive returned False, indicating a failure in creating/reusing.
+        status_display_dat.text = "Status: VAD On - Session Init Failed."
+        print(f"{ownerComp.name} - VAD: Failed to ensure recognition session is active.")
 
     # 确保 Timer CHOP (timer_send_audio) 是激活的，以便开始/继续发送音频块
     # SendAudioChunk 内部会再次检查所有条件
@@ -72,37 +57,6 @@ def onOnToOff(channel, sampleIndex, val, prev):
     """用户说话结束 (VAD 从 1 变为 0)"""
     print(f"{ownerComp.name} - VAD: Voice Ended (OnToOff).")
     status_display_dat.text = "Status: VAD Off - Audio Paused."
-
-    if not ownerComp.par.Recognize.eval():
-        # print(f"{ownerComp.name} - VAD: Recognition is disabled. Ignoring VAD event.")
-        return
-
-    # todo: stop socket
-
-    # if ownerComp.par.Taskid.eval():
-    #     print(f"{ownerComp.name} - VAD: Session active. Pausing audio send.")
-    #     ownerComp.par.Taskid = ""
-    #     # 此时，我们不关闭WebSocket或结束HTTP任务。
-    #     # 音频的发送由 SendAudioChunk 中的 VAD 信号判断来控制。
-    #     # 如果阿里云API有明确的 "pause_sending_audio" 或 "segment_end" WebSocket消息，
-    #     # 可以在这里通过 ws_client.sendText() 发送。
-    #     # 例如:
-    #     # stop_segment_message = { ... "name": "NotifySegmentEnd" ... } # 假设的API指令
-    #     # ws_client.sendText(json.dumps(stop_segment_message))
-    # else:
-    #     print(f"{ownerComp.name} - VAD: No active session or WebSocket to pause audio for.")
-
-    # if ownerComp.par.Websocketurl.eval():
-    #     print(f"{ownerComp.name} - VAD: WebSocket URL exists. Stopping WebSocket connection.")
-    #     ownerComp.par.Websocketurl = ""
-    # else:
-    #     print(f"{ownerComp.name} - VAD: No WebSocket URL. Ignoring VAD event.")
-    
-    # 如果Timer CHOP的active状态是直接由VAD信号控制的，它会自动停止。
-    # 如果Timer CHOP是常开的，SendAudioChunk内部的逻辑会使其不再发送数据。
-    # 如果想明确停止Timer:
-    # if timer_send_audio.par.Active.eval():
-    #    timer_send_audio.par.Active = False
     return
 
 
