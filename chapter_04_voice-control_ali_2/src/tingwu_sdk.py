@@ -77,7 +77,8 @@ class TingwuSDK:
         """Initialize the ACS client with credentials"""
         credentials = AccessKeyCredential(self.access_key_id, self.access_key_secret)
         self.acs_client = AcsClient(region_id='cn-beijing', credential=credentials)
-        logger.debug("ACS client initialized")
+        secrets = {"access_key_id": self.access_key_id, "access_key_secret": self.access_key_secret, "app_key": self.app_key}
+        logger.info(f'ACS client initialized: {secrets}')
 
     def create_task(self, 
                     source_language: str = 'cn', 
@@ -98,7 +99,7 @@ class TingwuSDK:
             target_languages: List of target languages for translation
             
         Returns:
-            Dictionary containing task info including TaskId and WebSocketUrl
+            Dictionary containing task info including TaskId and MeetingJoinUrl
         """
         logger.info(f"Creating Tingwu task with source_language={source_language}, format={format}, sample_rate={sample_rate}")
         
@@ -138,6 +139,8 @@ class TingwuSDK:
             method='PUT',
             uri='/openapi/tingwu/v2/tasks'
         )
+        request.add_query_param('type', 'realtime')
+
         
         request.set_content(json.dumps(body).encode('utf-8'))
         
@@ -145,9 +148,9 @@ class TingwuSDK:
             response = self.acs_client.do_action_with_exception(request)
             result = json.loads(response)
             
-            if 'TaskId' in result and 'WebSocketUrl' in result:
-                self.task_id = result['TaskId']
-                self.ws_url = result['WebSocketUrl']
+            if 'Code' in result and result['Code'] == '0' and 'Data' in result and 'TaskId' in result['Data'] and 'MeetingJoinUrl' in result['Data']:
+                self.task_id = result['Data']['TaskId']
+                self.ws_url = result['Data']['MeetingJoinUrl']
                 logger.info(f"Task created successfully. TaskId: {self.task_id}")
                 return result
             else:
@@ -184,6 +187,8 @@ class TingwuSDK:
             method='PUT',
             uri='/openapi/tingwu/v2/tasks/end'
         )
+        request.add_query_param('type', 'realtime')
+
         
         request.set_content(json.dumps(body).encode('utf-8'))
         
@@ -221,6 +226,7 @@ class TingwuSDK:
             method='PUT',
             uri='/openapi/tingwu/v2/tasks/info'
         )
+        request.add_query_param('type', 'realtime')
         
         request.set_content(json.dumps(body).encode('utf-8'))
         

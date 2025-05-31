@@ -11,6 +11,8 @@ from tingwu_sdk import TingwuSDK
 from audio_capture import AudioCapture
 from logger import logger
 
+load_dotenv()
+
 def on_transcription_result(result):
     """
     Callback for transcription results
@@ -50,17 +52,6 @@ def main():
     parser.add_argument('--duration', type=int, default=30, help='Recording duration in seconds')
     args = parser.parse_args()
 
-    # Load environment variables from project root .env file
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dotenv_path = os.path.join(project_root, '.env')
-    
-    if os.path.exists(dotenv_path):
-        logger.info(f"Loading environment from {dotenv_path}")
-        load_dotenv(dotenv_path=dotenv_path)
-    else:
-        logger.warning("No .env file found in project root")
-        load_dotenv()  # Try default location as fallback
-    
     # Get credentials from arguments or environment variables
     access_key_id = args.access_key_id or os.environ.get('ALIBABA_CLOUD_ACCESS_KEY_ID')
     access_key_secret = args.access_key_secret or os.environ.get('ALIBABA_CLOUD_ACCESS_KEY_SECRET')
@@ -95,8 +86,8 @@ def main():
             target_languages=target_languages
         )
         
-        print(f"Task created with ID: {task_info['TaskId']}")
-        print(f"WebSocket URL: {task_info['WebSocketUrl']}")
+        print(f"Task created with ID: {task_info['Data']['TaskId']}")
+        print(f"WebSocket URL: {task_info['Data']['MeetingJoinUrl']}")
         
         # Set up callback for transcription results
         sdk.set_callbacks(
