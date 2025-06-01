@@ -134,6 +134,10 @@ async def ws_handler(websocket: websockets.ServerConnection, path: str = None): 
     logger.info(f"TouchDesigner client connected from {websocket.remote_address}. Path received: '{path}'")
     websocket_clients.add(websocket)
     try:
+        # Send a test message immediately upon connection
+        await websocket.send("Connection test: Hello from Python WebSocket Server!")
+        logger.info(f"Sent test message to {websocket.remote_address}")
+
         # Keep the connection alive, listening for messages (though TD might not send any)
         async for message in websocket:
             logger.info(f"Received message from TD (unexpected): {message}")
