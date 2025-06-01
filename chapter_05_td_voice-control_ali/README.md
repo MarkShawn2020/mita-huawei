@@ -2,6 +2,8 @@
 
 本项目实现了阿里云通义听悟实时语音转写API与TouchDesigner的集成，采用WebSocket桥接方式，实现实时语音转文本并在TouchDesigner中显示。
 
+![alt text](image.png)
+
 ## 系统架构
 
 系统分为两个主要部分：
