@@ -33,7 +33,12 @@ class Logger:
         
         # Create console handler
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
+        
+        # 从环境变量获取日志级别，默认为 INFO
+        log_level_name = os.environ.get('LOG_LEVEL', 'INFO').upper()
+        log_level = getattr(logging, log_level_name, logging.INFO)
+        console_handler.setLevel(log_level)
+        self.logger.debug(f"Console log level set to {log_level_name} from environment variable")
         
         # Create formatter
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
