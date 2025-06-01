@@ -32,47 +32,59 @@ class TingwuNlsSDK:
         初始化通义听悟SDK
         
         Args:
-            access_key_id: 阿里云访问密钥ID
-            access_key_secret: 阿里云访问密钥密钥
-            app_key: 通义听悟应用密钥
+            access_key_id: 阿里云AccessKey ID
+            access_key_secret: 阿里云AccessKey Secret
+            app_key: 通义听悟 AppKey
         """
         self.access_key_id = access_key_id
         self.access_key_secret = access_key_secret
         self.app_key = app_key
         
-        # 初始化ACS客户端
-        self.acs_client = AcsClient(
-            ak=access_key_id,
-            secret=access_key_secret,
-            region_id='cn-beijing'
-        )
-        logger.info(f"ACS client initialized: {{'access_key_id': '{access_key_id}', 'access_key_secret': '{access_key_secret[:5]}...', 'app_key': '{app_key}'}}")
-        
-        # 任务相关属性
+        # 初始化相关变量
+        self.acs_client = None
+        self.transcriber = None
         self.task_id = None
         self.ws_url = None
-        
-        # 转写器实例
-        self.transcriber = None
-        
-        # 音频捕获线程
-        self.is_capturing = False
-        self.capture_thread = None
+        self.is_streaming = False
+        self.is_connected = False
         
         # 回调函数
         self.on_result = None
         self.on_sentence_begin = None
-        self.on_sentence_end = None 
+        self.on_sentence_end = None
         self.on_completed = None
         self.on_error = None
         self.on_connection_open = None
         self.on_connection_close = None
+        
+        # 添加延迟数据监控
+        self.audio_timestamps = {}  # 存储音频块ID和时间戳
+        self.latency_stats = {
+            'count': 0,
+            'total_latency': 0,
+            'min_latency': float('inf'),
+            'max_latency': 0,
+            'latencies': []  # 存储所有延迟值用于计算百分位数
+        }
+        self.audio_chunk_counter = 0  # 音频块计数器
+        self.audio_start_time = None  # 记录第一个音频块的时间
+        
+        self._init_client()
         
         # 状态标志
         self.is_connected = False
         self.is_streaming = False
         
         logger.info("Tingwu NLS SDK initialized")
+    
+    def _init_client(self):
+        # 初始化ACS客户端
+        self.acs_client = AcsClient(
+            ak=self.access_key_id,
+            secret=self.access_key_secret,
+            region_id='cn-beijing'
+        )
+        logger.info(f"ACS client initialized: {{'access_key_id': '{self.access_key_id}', 'access_key_secret': '{self.access_key_secret[:5]}...', 'app_key': '{self.app_key}'}}")
     
     def set_callbacks(self, 
                       on_result: Optional[Callable[[str, bool, float], None]] = None,
@@ -237,7 +249,7 @@ class TingwuNlsSDK:
     
     def send_audio_data(self, audio_data: bytes) -> bool:
         """
-        发送音频数据
+        发送音频数据到转写服务
         
         Args:
             audio_data: PCM格式的音频数据
@@ -253,14 +265,31 @@ class TingwuNlsSDK:
             logger.warning("Not streaming, but trying to send audio data anyway")
         
         try:
+            # 记录当前时间戳
+            current_time = time.time()
+            
+            # 如果是第一个音频块，记录起始时间
+            if self.audio_start_time is None:
+                self.audio_start_time = current_time
+            
+            # 为当前音频块分配ID并记录时间戳
+            chunk_id = self.audio_chunk_counter
+            self.audio_timestamps[chunk_id] = current_time
+            self.audio_chunk_counter += 1
+            
+            # 每100个音频块记录一次统计信息
+            if chunk_id % 100 == 0 and chunk_id > 0:
+                logger.debug(f"Sent {chunk_id} audio chunks, current latency stats: "
+                           f"avg={self.get_average_latency():.2f}ms, "
+                           f"min={self.latency_stats['min_latency']:.2f}ms, "
+                           f"max={self.latency_stats['max_latency']:.2f}ms")
+            
             # 发送音频数据
-            # 注意：NlsSpeechTranscriber.send_audio的第一个参数是音频数据，没有其他参数
             self.transcriber.send_audio(audio_data)
             return True
         except Exception as e:
             logger.error(f"Error sending audio data: {str(e)}")
             return False
-    
     def stop_streaming(self) -> bool:
         """
         停止WebSocket流式转写
@@ -310,6 +339,111 @@ class TingwuNlsSDK:
         logger.info("Task considered ended successfully after WebSocket closure")
         return {"Status": "Success", "Message": "Task ended by closing WebSocket connection"}
     
+    def get_latency_stats(self) -> Dict:
+        """
+        获取延迟统计信息
+        
+        Returns:
+            包含延迟统计数据的字典
+        """
+        # 确保至少有一个延迟样本
+        if self.latency_stats['count'] == 0:
+            return {
+                'count': 0,
+                'average_ms': 0,
+                'min_ms': 0,
+                'max_ms': 0
+            }
+        
+        # 计算百分位数（如果有足够样本）
+        stats = {
+            'count': self.latency_stats['count'],
+            'average_ms': self.get_average_latency(),
+            'min_ms': float('inf') if self.latency_stats['min_latency'] == float('inf') else self.latency_stats['min_latency'] * 1000,
+            'max_ms': self.latency_stats['max_latency'] * 1000
+        }
+        
+        # 计算百分位数（如果有足够的样本）
+        if len(self.latency_stats['latencies']) >= 10:
+            latencies_sorted = sorted(self.latency_stats['latencies'])
+            stats['p50_ms'] = self._get_percentile(latencies_sorted, 50) * 1000
+            stats['p95_ms'] = self._get_percentile(latencies_sorted, 95) * 1000
+            stats['p99_ms'] = self._get_percentile(latencies_sorted, 99) * 1000
+        
+        return stats
+    
+    def _get_percentile(self, sorted_data: List[float], percentile: int) -> float:
+        """
+        计算百分位数
+        
+        Args:
+            sorted_data: 已排序的数据列表
+            percentile: 百分位数（0-100）
+            
+        Returns:
+            指定百分位数的值
+        """
+        if not sorted_data:
+            return 0.0
+        
+        index = (len(sorted_data) - 1) * percentile / 100
+        if index.is_integer():
+            return sorted_data[int(index)]
+        else:
+            lower_idx = int(index)
+            fraction = index - lower_idx
+            return sorted_data[lower_idx] * (1 - fraction) + sorted_data[lower_idx + 1] * fraction
+    
+    def get_average_latency(self) -> float:
+        """
+        获取平均延迟（毫秒）
+        
+        Returns:
+            平均延迟，如果没有数据则返回0
+        """
+        if self.latency_stats['count'] == 0:
+            return 0
+        return self.latency_stats['total_latency'] * 1000 / self.latency_stats['count']
+        
+    def calculate_latency(self, audio_timestamp: float) -> float:
+        """
+        计算从音频时间戳到当前时间的延迟
+        
+        Args:
+            audio_timestamp: 音频时间戳（秒）
+            
+        Returns:
+            延迟时间（秒）
+        """
+        current_time = time.time()
+        latency = current_time - audio_timestamp
+        
+        # 更新延迟统计信息
+        self.latency_stats['count'] += 1
+        self.latency_stats['total_latency'] += latency
+        self.latency_stats['min_latency'] = min(self.latency_stats['min_latency'], latency)
+        self.latency_stats['max_latency'] = max(self.latency_stats['max_latency'], latency)
+        self.latency_stats['latencies'].append(latency)
+        
+        return latency
+    
+    def get_audio_timestamp(self, begin_time_ms: int) -> float:
+        """
+        根据音频相对开始时间（毫秒）计算绝对时间戳
+        
+        Args:
+            begin_time_ms: 音频相对开始时间（毫秒）
+            
+        Returns:
+            绝对时间戳（秒）
+        """
+        if self.audio_start_time is None:
+            logger.warning("No audio start time available")
+            return time.time() - (begin_time_ms / 1000.0)
+            
+        # 根据音频开始时间和相对开始时间计算绝对时间戳
+        return self.audio_start_time + (begin_time_ms / 1000.0)
+    
     def get_task_info(self) -> Dict:
         """
         获取任务信息
@@ -318,24 +452,21 @@ class TingwuNlsSDK:
             包含任务信息的字典
         """
         if not self.task_id:
-            logger.error("No task ID available")
-            raise Exception("No task ID available")
+            logger.warning("No task ID available")
+            return {"Status": "Unknown", "Message": "No task ID available"}
             
-        logger.info(f"Getting info for task with ID: {self.task_id}")
+        # 对于通义听悟实时流式转写，通过WebSocket状态获取任务状态
+        # 而非调用HTTP API
         
-        # 返回本地状态
-        ws_status = {
-            "is_connected": self.is_connected,
-            "is_streaming": self.is_streaming,
-            "task_id": self.task_id,
-            "ws_url": self.ws_url
-        }
+        task_status = "Unknown"
+        if self.is_streaming:
+            task_status = "Running"
         
-        logger.info("Returning local state instead of calling API")
+        logger.info(f"Task status: {task_status}")
         return {
-            "Status": "Success",
             "TaskId": self.task_id,
-            "WebSocketStatus": ws_status,
+            "Status": task_status,
+            "LatencyStats": self.get_latency_stats(),
             "Message": "Task info retrieved from local state"
         }
     
@@ -350,43 +481,122 @@ class TingwuNlsSDK:
     def _on_sentence_begin(self, message, *args):
         """句子开始回调"""
         logger.debug(f"Sentence began: {message}")
+        
+        # 解析消息
+        if isinstance(message, str):
+            try:
+                message_obj = json.loads(message)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse sentence begin message as JSON: {e}")
+                return
+        else:
+            message_obj = message
+            
         if self.on_sentence_begin:
-            self.on_sentence_begin(message)
+            self.on_sentence_begin(message_obj)
     
     def _on_sentence_end(self, message, *args):
         """句子结束回调"""
         logger.debug(f"Sentence ended: {message}")
+        
+        # 解析消息
+        if isinstance(message, str):
+            try:
+                message_obj = json.loads(message)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse sentence end message as JSON: {e}")
+                return
+        else:
+            message_obj = message
+            
         if self.on_sentence_end:
-            self.on_sentence_end(message)
+            self.on_sentence_end(message_obj)
     
     def _on_result_changed(self, message, *args):
-        """结果变化回调"""
+        """转写结果变更回调"""
+        logger.debug(f"Result changed: {message}")
+        
         try:
-            # 解析JSON消息
-            result_obj = json.loads(message)
-            result = result_obj.get('payload', {}).get('result', '')
-            is_final = result_obj.get('payload', {}).get('final', False)
-            confidence = result_obj.get('payload', {}).get('confidence', 0.0)
+            # 检查消息类型并解析JSON（如果是字符串）
+            if isinstance(message, str):
+                try:
+                    message_obj = json.loads(message)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse message as JSON: {e}")
+                    return
+            else:
+                message_obj = message
             
-            logger.debug(f"Result changed: '{result}' (final: {is_final}, confidence: {confidence})")
+            # 从消息对象中提取有效负载
+            payload = message_obj.get('payload', {})
+            result = payload.get('result', {})
             
-            # 调用用户回调
+            # 解析转写结果
+            result_text = result.get('text', '')
+            is_sentence_end = result.get('sentence_end', False)
+            
+            # 获取音频时间信息
+            begin_time = result.get('begin_time', 0)  # 音频起始时间（毫秒）
+            current_time = time.time()  # 收到结果的当前时间
+            
+            # 计算对应的音频绝对时间戳
+            audio_timestamp = self.get_audio_timestamp(begin_time) if begin_time else None
+            
+            # 计算端到端延迟（如果有对应的音频时间戳）
+            latency = None
+            if audio_timestamp:
+                latency = self.calculate_latency(audio_timestamp)
+                logger.debug(f"Speech latency: {latency*1000:.2f}ms for text: '{result_text[:30]}...'")
+            
+            # 调用用户定义的回调
             if self.on_result:
-                self.on_result(result, is_final, confidence)
+                # 将相对开始时间（毫秒）传递给回调
+                self.on_result(result_text, is_sentence_end, begin_time)
+                
+            # 打印详细的延迟信息（仅在调试模式下）
+            if latency and len(self.latency_stats['latencies']) % 10 == 0:
+                logger.debug(f"Current latency stats: "
+                           f"avg={self.get_average_latency():.2f}ms, "
+                           f"min={self.latency_stats['min_latency']*1000:.2f}ms, "
+                           f"max={self.latency_stats['max_latency']*1000:.2f}ms")
         except Exception as e:
             logger.error(f"Error processing result: {str(e)}")
+            import traceback
+            logger.debug(traceback.format_exc())
     
     def _on_transcription_completed(self, message, *args):
         """转写完成回调"""
         logger.info(f"Transcription completed: {message}")
+        
+        # 解析消息
+        if isinstance(message, str):
+            try:
+                message_obj = json.loads(message)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse completed message as JSON: {e}")
+                message_obj = {"error": "JSON parse error", "original": message}
+        else:
+            message_obj = message
+            
         if self.on_completed:
-            self.on_completed(message)
+            self.on_completed(message_obj)
     
     def _on_error(self, message, *args):
         """错误回调"""
         logger.error(f"Error occurred: {message}")
+        
+        # 解析消息
+        if isinstance(message, str):
+            try:
+                message_obj = json.loads(message)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse error message as JSON: {e}")
+                message_obj = message  # 如果无法解析，保留原始字符串
+        else:
+            message_obj = message
+            
         if self.on_error:
-            self.on_error(message)
+            self.on_error(message_obj)
     
     def _on_close(self, *args):
         """连接关闭回调"""

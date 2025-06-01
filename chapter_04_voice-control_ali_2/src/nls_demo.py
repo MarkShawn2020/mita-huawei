@@ -19,19 +19,20 @@ logger = Logger().logger
 
 load_dotenv()
 
-def on_result(result: str, is_final: bool, confidence: float):
-    """
-    转写结果回调
+def on_result(result_text, is_sentence_end, begin_time_ms):
+    """转写结果回调函数"""
+    current_time = time.time()
+    # 音频相对时间戳（从录音开始的毫秒数）
+    time_relative = f"T+{begin_time_ms/1000:.2f}s" if begin_time_ms else "Unknown"
     
-    Args:
-        result: 转写结果文本
-        is_final: 是否为最终结果
-        confidence: 置信度
-    """
-    if is_final:
-        print(f"\nFinal ({confidence:.2f}): {result}")
+    # 打印结果，包含相对时间戳
+    if is_sentence_end:
+        print(f"\n[Final Result] [{time_relative}] {result_text}")
+        logger.info(f"Final transcription result at {time_relative}: {result_text}")
     else:
-        print(f"Interim ({confidence:.2f}): {result}", end="\r", flush=True)
+        # 中间结果使用\r覆盖同一行
+        print(f"\r[Interim Result] [{time_relative}] {result_text}", end="")
+        logger.debug(f"Interim transcription result at {time_relative}: {result_text}")
 
 def on_sentence_begin(message: Dict):
     """
@@ -56,9 +57,14 @@ def on_completed(message: Dict):
     转写完成回调
     
     Args:
-        message: 包含转写完成信息的字典
+        message: 完成消息，包含任务信息
     """
-    logger.info(f"Transcription completed: {message}")
+    print("\nTranscription completed")
+    print(f"Details: {message}")
+    
+    # 在转写完成时显示最终的延迟统计信息
+    if 'sdk' in globals() and hasattr(sdk, 'get_latency_stats'):
+        display_latency_stats()
     print("\nTranscription completed!")
 
 def on_error(message: str):
@@ -70,6 +76,39 @@ def on_error(message: str):
     """
     logger.error(f"Error: {message}")
     print(f"\nError occurred: {message}")
+
+def display_latency_stats():
+    """显示语音识别延迟统计信息"""
+    # 使用全局变量
+    global sdk
+    
+    if 'sdk' not in globals() or not hasattr(sdk, 'get_latency_stats'):
+        print("Latency statistics not available.")
+        return
+        
+    try:
+        stats = sdk.get_latency_stats()
+        if stats['count'] == 0:
+            print("No latency data available yet.")
+            return
+            
+        print("\n" + "=" * 50)
+        print("SPEECH RECOGNITION LATENCY STATISTICS")
+        print("=" * 50)
+        print(f"Total samples: {stats['count']}")
+        print(f"Average latency: {stats['average_ms']:.2f} ms")
+        print(f"Minimum latency: {stats['min_ms']:.2f} ms")
+        print(f"Maximum latency: {stats['max_ms']:.2f} ms")
+        
+        if 'p50_ms' in stats:
+            print(f"50th percentile: {stats['p50_ms']:.2f} ms")
+            print(f"95th percentile: {stats['p95_ms']:.2f} ms")
+            print(f"99th percentile: {stats['p99_ms']:.2f} ms")
+            
+        print("=" * 50)
+    except Exception as e:
+        logger.error(f"Error displaying latency stats: {str(e)}")
+        print(f"Error displaying latency stats: {str(e)}")
 
 def on_connection_open():
     """连接打开回调"""
@@ -165,16 +204,26 @@ def main():
         # 开始捕获音频
         audio_capture.start()
         
-        # 等待指定的时间
-        time.sleep(args.duration)
+        # 定期显示延迟统计信息
+        start_time = time.time()
+        display_interval = 5  # 每5秒显示一次统计信息
+        next_display = start_time + display_interval
         
-        print("\nStopping recording...")
+        # 等待录音完成，同时定期显示统计信息
+        while audio_capture.is_recording:
+            current_time = time.time()
+            if current_time >= next_display:
+                print("\n--- Current Latency Statistics ---")
+                display_latency_stats()
+                next_display = current_time + display_interval
+            time.sleep(0.1)  # 避免CPU过度使用
         
-        # 停止音频捕获
-        audio_capture.stop()
-        
-        # 停止WebSocket流式转写
+        # 停止流式转写
         sdk.stop_streaming()
+        
+        # 显示最终的延迟统计信息
+        print("\n--- Final Latency Statistics ---")
+        display_latency_stats()
         
         # 结束任务
         print("Ending task...")
