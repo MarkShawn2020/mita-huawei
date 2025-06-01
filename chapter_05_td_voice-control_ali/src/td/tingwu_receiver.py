@@ -44,39 +44,43 @@ class TDLogHandler(logging.Handler):
 # 用于存储设置和数据
 class TingwuReceiver:
     def __init__(self, ownerComp):
-        # 存储组件
-        self.ownerComp = ownerComp
-        
-        # 初始化日志
-        self.log_node = op('log')
-        self.td_logger = TDLogger(self.log_node)
-        self.logger = self.td_logger.logger
-        
-        # 存储管理器设置
-        storageName = "TingwuReceiverData"
-        self.stored_data = StorageManager(self, ownerComp, storageName)
-        
-        # 初始数据设置
-        default_data = {
-            "ws_host": "127.0.0.1",
-            "ws_port": 8765,
-            "current_text": "",
-            "is_connected": False,
-            "connection_status": "Disconnected",
-            "reconnect_attempts": 0,
-            "max_reconnect_attempts": 5,
-        }
-        
-        # 初始化存储
-        self.stored_data.Initialize(default_data)
-        
-        self.logger.info("TingwuReceiver initialized")
-        
-        # 关联WebSocket连接节点
-        self.ws_node = self.ownerComp.op('websocket1')
-        
-        # 确保UI正确显示初始状态
-        self.update_ui()
+        try:
+            # 存储组件
+            self.ownerComp = ownerComp
+            print("TingwuReceiver initialized successfully!")
+            
+            # # 初始化日志
+            # self.log_node = op('log')
+            # self.td_logger = TDLogger(self.log_node)
+            # self.logger = self.td_logger.logger
+            
+            # # 存储管理器设置
+            # storageName = "TingwuReceiverData"
+            # self.stored_data = StorageManager(self, ownerComp, storageName)
+            
+            # # 初始数据设置
+            # default_data = {
+            #     "ws_host": "127.0.0.1",
+            #     "ws_port": 8765,
+            #     "current_text": "",
+            #     "is_connected": False,
+            #     "connection_status": "Disconnected",
+            #     "reconnect_attempts": 0,
+            #     "max_reconnect_attempts": 5,
+            # }
+            
+            # # 初始化存储
+            # self.stored_data.Initialize(default_data)
+            
+            # self.logger.info("TingwuReceiver initialized")
+            
+            # # 关联WebSocket连接节点
+            # self.ws_node = self.ownerComp.op('websocket1')
+            
+            # # 确保UI正确显示初始状态
+            # self.update_ui()
+        except Exception as e:
+            print(f"Error initializing TingwuReceiver: {str(e)}")
     
     def connect(self):
         """连接到WebSocket服务器"""
