@@ -1,0 +1,5 @@
+aliyunsdkcore>=2.13.3
+websocket-client>=1.6.1
+pyaudio>=0.2.13
+python-dotenv>=1.0.0
+numpy>=1.24.0
