@@ -13,7 +13,7 @@ from logger import logger
 
 load_dotenv()
 
-def on_transcription_result(result):
+def on_transcription_result(result: str):
     """
     Callback for transcription results
     
@@ -21,30 +21,7 @@ def on_transcription_result(result):
         result: The transcription result from Tingwu API
     """
     # Log full result for debugging
-    logger.debug(f"Full result: {result}")
-    
-    # Process different result types
-    if 'TranscriptionResult' in result:
-        sentence = result['TranscriptionResult'].get('SentenceText', '')
-        is_sentence_end = result['TranscriptionResult'].get('SentenceEnd', False)
-        
-        if is_sentence_end:
-            print(f"\nFinal: {sentence}")
-        else:
-            print(f"Interim: {sentence}", end="\r", flush=True)
-    
-    # Handle translation results if present
-    if 'TranslationResult' in result:
-        for lang, translation in result['TranslationResult'].items():
-            sentence = translation.get('SentenceText', '')
-            is_sentence_end = translation.get('SentenceEnd', False)
-            
-            if is_sentence_end:
-                print(f"\nTranslation ({lang}): {sentence}")
-    
-    # Handle status messages
-    if 'Status' in result:
-        logger.info(f"Status message received: {result['Status']}")
+    logger.info(f"Full result: {result}")
 
 def main():
     """Main function to demonstrate real-time speech-to-text using Tingwu SDK"""
@@ -56,6 +33,8 @@ def main():
     parser.add_argument('--enable-translation', action='store_true', help='Enable translation')
     parser.add_argument('--target-language', default='en', help='Target language for translation')
     parser.add_argument('--sample-rate', type=int, default=16000, help='Audio sample rate (8000 or 16000)')
+
+    # todo: 可以升级为多长时间没有声音就停止程序
     parser.add_argument('--duration', type=int, default=30, help='Recording duration in seconds')
     args = parser.parse_args()
 

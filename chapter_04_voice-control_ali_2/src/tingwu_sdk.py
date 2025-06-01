@@ -45,10 +45,12 @@ class TingwuSDK:
         self.is_connected = False
         
         # Callbacks
-        self.on_transcription_result = None
+        self.on_transcription_result = None  # 兼容旧版本的回调
         self.on_connection_open = None
         self.on_connection_close = None
         self.on_error = None
+        self.on_result = None  # 新的转写结果回调
+        self.on_completed = None  # 转写完成回调
         
         logger.info("Tingwu SDK initialized")
         
@@ -329,9 +331,13 @@ class TingwuSDK:
                                 else:
                                     logger.debug(f"Intermediate result: {result} (confidence: {confidence})")
                                 
-                                # 调用回调函数
+                                # 调用回调函数 - 同时支持新旧两种回调机制
                                 if self.on_result:
                                     self.on_result(result, is_final, confidence)
+                                    
+                                # 向后兼容旧版回调
+                                if self.on_transcription_result:
+                                    self.on_transcription_result(result)
                         
                         # 处理完成事件
                         elif name == 'TranscriptionCompleted':
