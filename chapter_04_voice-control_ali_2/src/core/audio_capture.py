@@ -2,12 +2,11 @@
 # coding=utf-8
 
 import pyaudio
-import numpy as np
 import threading
 import time
-from typing import Optional, Callable
+from typing import Callable
 
-from logger import logger
+from utils.logger import logger
 
 class AudioCapture:
     """

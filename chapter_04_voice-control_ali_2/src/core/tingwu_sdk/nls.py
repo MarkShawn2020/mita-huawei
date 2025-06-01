@@ -6,21 +6,16 @@
 基于 alibaba-nls-python-sdk 中的 NlsSpeechTranscriber 类
 """
 
-import os
 import time
 import json
-import datetime
-import traceback
 import urllib.parse
-import threading
-import uuid
-from typing import Dict, Optional, Callable, List, Any
+from typing import Dict, Optional, Callable, List
 
 import nls
 from aliyunsdkcore.client import AcsClient
 from aliyunsdkcore.request import CommonRequest
 
-from logger import Logger
+from utils.logger import Logger
 
 logger = Logger().logger
 
@@ -529,36 +524,15 @@ class TingwuNlsSDK:
             
             # 从消息对象中提取有效负载
             payload = message_obj.get('payload', {})
-            result = payload.get('result', {})
-            
-            # 解析转写结果
-            result_text = result.get('text', '')
-            is_sentence_end = result.get('sentence_end', False)
-            
-            # 获取音频时间信息
-            begin_time = result.get('begin_time', 0)  # 音频起始时间（毫秒）
-            current_time = time.time()  # 收到结果的当前时间
-            
-            # 计算对应的音频绝对时间戳
-            audio_timestamp = self.get_audio_timestamp(begin_time) if begin_time else None
-            
-            # 计算端到端延迟（如果有对应的音频时间戳）
-            latency = None
-            if audio_timestamp:
-                latency = self.calculate_latency(audio_timestamp)
-                logger.debug(f"Speech latency: {latency*1000:.2f}ms for text: '{result_text[:30]}...'")
+            result_text = payload.get('result', {})
+            is_sentence_end = None
+            begin_time = None
             
             # 调用用户定义的回调
             if self.on_result:
                 # 将相对开始时间（毫秒）传递给回调
                 self.on_result(result_text, is_sentence_end, begin_time)
-                
-            # 打印详细的延迟信息（仅在调试模式下）
-            if latency and len(self.latency_stats['latencies']) % 10 == 0:
-                logger.debug(f"Current latency stats: "
-                           f"avg={self.get_average_latency():.2f}ms, "
-                           f"min={self.latency_stats['min_latency']*1000:.2f}ms, "
-                           f"max={self.latency_stats['max_latency']*1000:.2f}ms")
+
         except Exception as e:
             logger.error(f"Error processing result: {str(e)}")
             import traceback

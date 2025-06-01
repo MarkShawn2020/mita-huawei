@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
 
-import os
 import json
 import datetime
 import websocket
@@ -9,14 +8,13 @@ import threading
 import time
 import ssl
 import numpy as np
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Optional, Callable
 
-import nls
 from aliyunsdkcore.client import AcsClient
 from aliyunsdkcore.request import CommonRequest
 from aliyunsdkcore.auth.credentials import AccessKeyCredential
 
-from logger import logger
+from utils.logger import logger
 
 
 class TingwuSDK:

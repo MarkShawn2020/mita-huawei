@@ -8,12 +8,12 @@
 import os
 import time
 import argparse
-from typing import Dict, Optional, Any
+from typing import Dict
 from dotenv import load_dotenv
 
-from tingwu_nls_sdk import TingwuNlsSDK
-from audio_capture import AudioCapture
-from logger import Logger
+from core.tingwu_sdk.nls import TingwuNlsSDK
+from core.audio_capture import AudioCapture
+from utils.logger import Logger
 
 logger = Logger().logger
 
@@ -21,18 +21,7 @@ load_dotenv()
 
 def on_result(result_text, is_sentence_end, begin_time_ms):
     """转写结果回调函数"""
-    current_time = time.time()
-    # 音频相对时间戳（从录音开始的毫秒数）
-    time_relative = f"T+{begin_time_ms/1000:.2f}s" if begin_time_ms else "Unknown"
-    
-    # 打印结果，包含相对时间戳
-    if is_sentence_end:
-        print(f"\n[Final Result] [{time_relative}] {result_text}")
-        logger.info(f"Final transcription result at {time_relative}: {result_text}")
-    else:
-        # 中间结果使用\r覆盖同一行
-        print(f"\r[Interim Result] [{time_relative}] {result_text}", end="")
-        logger.debug(f"Interim transcription result at {time_relative}: {result_text}")
+    logger.info(f"[on result] {result_text}")
 
 def on_sentence_begin(message: Dict):
     """

@@ -4,12 +4,11 @@
 import os
 import time
 import argparse
-import json
 from dotenv import load_dotenv
 
-from tingwu_sdk import TingwuSDK
-from audio_capture import AudioCapture
-from logger import logger
+from core.tingwu_sdk.ws import TingwuSDK
+from core.audio_capture import AudioCapture
+from utils.logger import logger
 
 load_dotenv()
 
