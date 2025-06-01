@@ -8,7 +8,10 @@
 import os
 import time
 import argparse
-from typing import Dict
+import asyncio
+import websockets
+import threading
+from typing import Dict, Set
 from dotenv import load_dotenv
 
 from core.tingwu_sdk.nls import TingwuNlsSDK
@@ -19,9 +22,24 @@ logger = Logger().logger
 
 load_dotenv()
 
+# WebSocket server state
+websocket_clients: Set[websockets.WebSocketServerProtocol] = set()
+WEBSOCKET_PORT = 8765
+WEBSOCKET_HOST = "127.0.0.1"
+
+async def send_to_td(message: str):
+    """Sends a message to all connected WebSocket clients."""
+    if websocket_clients:
+        # Create a list of tasks to send messages concurrently
+        tasks = [client.send(message) for client in websocket_clients]
+        await asyncio.gather(*tasks, return_exceptions=True) # Log exceptions if any
+
 def on_result(result_text, is_sentence_end, begin_time_ms):
     """转写结果回调函数"""
     logger.info(f"[on result] {result_text}")
+    # Schedule the send_to_td coroutine on the WebSocket server's event loop
+    if websocket_server_loop:
+        asyncio.run_coroutine_threadsafe(send_to_td(result_text), websocket_server_loop)
 
 def on_sentence_begin(message: Dict):
     """
@@ -55,6 +73,9 @@ def on_completed(message: Dict):
     if 'sdk' in globals() and hasattr(sdk, 'get_latency_stats'):
         display_latency_stats()
     print("\nTranscription completed!")
+    # Optionally, send a completion message to TD
+    if websocket_server_loop:
+        asyncio.run_coroutine_threadsafe(send_to_td("__TRANSCRIBE_COMPLETED__"), websocket_server_loop)
 
 def on_error(message: str):
     """
@@ -105,7 +126,49 @@ def on_connection_open():
 
 def on_connection_close():
     """连接关闭回调"""
-    print("\nWebSocket connection closed - will try to reconnect if still recording")
+    print("\nSpeech service WebSocket connection closed - will try to reconnect if still recording")
+
+# WebSocket server logic
+async def ws_handler(websocket: websockets.WebSocketServerProtocol, path: str):
+    """Handles new WebSocket connections."""
+    logger.info(f"TouchDesigner client connected from {websocket.remote_address}")
+    websocket_clients.add(websocket)
+    try:
+        # Keep the connection alive, listening for messages (though TD might not send any)
+        async for message in websocket:
+            logger.info(f"Received message from TD (unexpected): {message}")
+    except websockets.exceptions.ConnectionClosedOK:
+        logger.info(f"TouchDesigner client {websocket.remote_address} disconnected normally.")
+    except websockets.exceptions.ConnectionClosedError as e:
+        logger.error(f"TouchDesigner client {websocket.remote_address} disconnected with error: {e}")
+    finally:
+        websocket_clients.remove(websocket)
+        logger.info(f"TouchDesigner client {websocket.remote_address} removed. Remaining clients: {len(websocket_clients)}")
+
+websocket_server_loop = None
+
+def start_websocket_server_sync():
+    """Starts the WebSocket server in a synchronous way for threading."""
+    global websocket_server_loop
+    websocket_server_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(websocket_server_loop)
+    
+    logger.info(f"Starting WebSocket server for TouchDesigner on ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
+    start_server = websockets.serve(ws_handler, WEBSOCKET_HOST, WEBSOCKET_PORT, loop=websocket_server_loop)
+    
+    websocket_server_loop.run_until_complete(start_server)
+    try:
+        websocket_server_loop.run_forever()
+    except KeyboardInterrupt:
+        logger.info("WebSocket server shutting down...")
+    finally:
+        # Clean up server resources
+        tasks = asyncio.all_tasks(loop=websocket_server_loop)
+        for task in tasks:
+            task.cancel()
+        websocket_server_loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+        websocket_server_loop.close()
+        logger.info("WebSocket server stopped.")
 
 def main():
     """使用通义听悟SDK演示实时语音转写的主函数"""
@@ -202,8 +265,6 @@ def main():
         while audio_capture.is_recording:
             current_time = time.time()
             if current_time >= next_display:
-                print("\n--- Current Latency Statistics ---")
-                display_latency_stats()
                 next_display = current_time + display_interval
             time.sleep(0.1)  # 避免CPU过度使用
         
@@ -226,4 +287,17 @@ def main():
         print(f"Error: {str(e)}")
 
 if __name__ == "__main__":
-    main()
+    # Start WebSocket server in a separate thread
+    ws_thread = threading.Thread(target=start_websocket_server_sync, daemon=True)
+    ws_thread.start()
+    logger.info("WebSocket server thread started.")
+
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Main application shutting down...")
+    finally:
+        # Ensure WebSocket server loop is stopped if main exits
+        if websocket_server_loop and websocket_server_loop.is_running():
+            websocket_server_loop.call_soon_threadsafe(websocket_server_loop.stop)
+        logger.info("Application cleanup finished.")
