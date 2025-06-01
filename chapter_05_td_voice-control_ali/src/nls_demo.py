@@ -23,7 +23,7 @@ logger = Logger().logger
 load_dotenv()
 
 # WebSocket server state
-websocket_clients: Set[websockets.WebSocketServerProtocol] = set()
+websocket_clients: Set[websockets.ServerConnection] = set() # Updated type hint
 WEBSOCKET_PORT = 8765
 WEBSOCKET_HOST = "127.0.0.1"
 
@@ -129,9 +129,9 @@ def on_connection_close():
     print("\nSpeech service WebSocket connection closed - will try to reconnect if still recording")
 
 # WebSocket server logic
-async def ws_handler(websocket: websockets.WebSocketServerProtocol, path: str):
+async def ws_handler(websocket: websockets.ServerConnection, path: str = None): # Updated type hint, path made optional
     """Handles new WebSocket connections."""
-    logger.info(f"TouchDesigner client connected from {websocket.remote_address}")
+    logger.info(f"TouchDesigner client connected from {websocket.remote_address}. Path received: '{path}'")
     websocket_clients.add(websocket)
     try:
         # Keep the connection alive, listening for messages (though TD might not send any)
@@ -147,28 +147,69 @@ async def ws_handler(websocket: websockets.WebSocketServerProtocol, path: str):
 
 websocket_server_loop = None
 
+async def _async_websocket_server_main():
+    """Asynchronous main function for the WebSocket server."""
+    # Add PID and Thread ID for better debugging context
+    logger.info(f"Async WebSocket server task starting on ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT} (PID: {os.getpid()}, Thread: {threading.get_ident()})")
+    await asyncio.sleep(0.01) # A small delay to allow the loop to fully start
+    
+    try:
+        # Use async with for cleaner server lifecycle management.
+        # The server runs until this async with block exits or is cancelled.
+        async with websockets.serve(ws_handler, WEBSOCKET_HOST, WEBSOCKET_PORT):
+            logger.info(f"WebSocket server (async with) is running on ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
+            await asyncio.Future() # Keep running until cancelled from outside
+    except asyncio.CancelledError:
+        logger.info("WebSocket server task (_async_websocket_server_main) was cancelled.")
+    except Exception as e:
+        logger.error(f"WebSocket server main task (_async_websocket_server_main) encountered an error: {e}", exc_info=True)
+    finally:
+        # This finally block executes when _async_websocket_server_main exits.
+        # The 'async with' statement ensures websockets.serve cleans up its resources.
+        logger.info("WebSocket server task (_async_websocket_server_main) finished or was interrupted.")
+
+
 def start_websocket_server_sync():
-    """Starts the WebSocket server in a synchronous way for threading."""
+    """Starts the WebSocket server in a dedicated thread."""
     global websocket_server_loop
     websocket_server_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(websocket_server_loop)
     
-    logger.info(f"Starting WebSocket server for TouchDesigner on ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
-    start_server = websockets.serve(ws_handler, WEBSOCKET_HOST, WEBSOCKET_PORT, loop=websocket_server_loop)
+    logger.info(f"Initializing WebSocket server for TouchDesigner on ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
     
-    websocket_server_loop.run_until_complete(start_server)
     try:
-        websocket_server_loop.run_forever()
+        websocket_server_loop.run_until_complete(_async_websocket_server_main())
     except KeyboardInterrupt:
-        logger.info("WebSocket server shutting down...")
+        logger.info("WebSocket server thread interrupted by KeyboardInterrupt (from main thread likely).")
+    except Exception as e:
+        logger.error(f"WebSocket server thread crashed: {e}", exc_info=True)
     finally:
-        # Clean up server resources
-        tasks = asyncio.all_tasks(loop=websocket_server_loop)
-        for task in tasks:
-            task.cancel()
-        websocket_server_loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-        websocket_server_loop.close()
-        logger.info("WebSocket server stopped.")
+        logger.info("WebSocket server thread: attempting to stop and clean up event loop...")
+        if websocket_server_loop.is_running():
+            logger.info("Event loop is running, calling stop().")
+            # Schedule stop on the loop itself if it's running from run_forever
+            # For run_until_complete, it stops when the coroutine finishes or is cancelled.
+            # If _async_websocket_server_main exited due to an error, run_until_complete would have finished.
+            # If it was cancelled (e.g. by KeyboardInterrupt on main thread causing shutdown),
+            # the cancellation should propagate.
+            # For safety, we can try to stop it if it's still marked as running.
+            all_tasks = asyncio.all_tasks(loop=websocket_server_loop)
+            logger.info(f"Cancelling {len(all_tasks)} tasks in websocket_server_loop.")
+            for task in all_tasks:
+                task.cancel()
+            # Give tasks a chance to process cancellation
+            try:
+                # This might raise RuntimeError if loop is already closing/closed
+                websocket_server_loop.run_until_complete(asyncio.gather(*all_tasks, return_exceptions=True))
+            except RuntimeError as gather_err:
+                logger.warning(f"RuntimeError during task gathering on websocket_server_loop shutdown: {gather_err}")
+
+        if not websocket_server_loop.is_closed():
+            logger.info("Closing websocket_server_loop.")
+            websocket_server_loop.close()
+        else:
+            logger.info("websocket_server_loop was already closed.")
+        logger.info("WebSocket server thread: event loop cleanup finished.")
 
 def main():
     """使用通义听悟SDK演示实时语音转写的主函数"""
