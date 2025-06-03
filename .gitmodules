@@ -1,0 +1,3 @@
+[submodule "chapter_06_doubao-rtc/packages/rtc-aigc-demo"]
+	path = chapter_06_doubao-rtc/packages/rtc-aigc-demo
+	url = https://github.com/MarkShawn2020/rtc-aigc-demo
