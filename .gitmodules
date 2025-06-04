@@ -1,3 +1,6 @@
 [submodule "chapter_06_doubao-rtc/packages/rtc-aigc-demo"]
 	path = chapter_06_doubao-rtc/packages/rtc-aigc-demo
 	url = https://github.com/MarkShawn2020/rtc-aigc-demo
+[submodule "chapter_06_doubao-rtc/packages/fetch-doubao-all-voices"]
+	path = chapter_06_doubao-rtc/packages/fetch-doubao-all-voices
+	url = https://github.com/MarkShawn2020/fetch-doubao-all-voices
